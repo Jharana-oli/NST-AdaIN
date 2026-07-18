@@ -1,0 +1,4 @@
+content_dir: ./content_data
+style_dir: ./style_data
+vgg: ./vgg_normalised.pth
+experiment: experiment1
