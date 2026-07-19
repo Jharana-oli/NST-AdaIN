@@ -181,6 +181,7 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+
 # PyCharm
 #   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
@@ -216,3 +217,46 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# ── Model weights (too large for GitHub) ─
+*.pth
+*.pt
+
+# ── Datasets (too large for GitHub) ──────
+content_data/
+style_data/
+
+# ── Training outputs (auto-generated) ────
+experiment/
+
+# ── VS Code ──────────────────────────────
+.vscode/
+
+# ── OS files ─────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Virtual environment ──────────────────
+.venv/
+
+# ── Python cache ─────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Model weights (too large for GitHub) ─
+*.pth
+*.pt
+
+# ── Datasets (too large for GitHub) ──────
+content_data/
+style_data/
+
+# ── Training outputs (auto-generated) ────
+experiment/
+
+# ── VS Code ──────────────────────────────
+.vscode/
+
+# ── OS files ─────────────────────────────
+.DS_Store
+Thumbs.db
