@@ -10,12 +10,6 @@ from utils.model import *
 from tqdm import tqdm
 from torchvision.utils import save_image
 
-# ── FIX: Handle large/corrupted images ──
-from PIL import Image, ImageFile
-Image.MAX_IMAGE_PIXELS = 500_000_000  # Allow large images
-ImageFile.LOAD_TRUNCATED_IMAGES = True  # Handle truncated images
-
-
 def parse_arguments():
     parser = argparse.ArgumentParser()
 
