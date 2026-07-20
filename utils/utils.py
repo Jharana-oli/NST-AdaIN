@@ -1,8 +1,9 @@
 from torch.utils.data import Dataset
 import os
-from PIL import Image
+from PIL import Image,ImageFile
 from torchvision import transforms
-
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+import random
 
 class ImageFolderDataset(Dataset):
     def __init__(self, root, transform = None):
@@ -17,7 +18,15 @@ class ImageFolderDataset(Dataset):
 
     def __getitem__(self, idx):
         image_path = os.path.join(self.root, self.files[idx])
-        image = Image.open(image_path).convert('RGB')
+        
+        try:
+            image = Image.open(image_path).convert('RGB')
+        except Exception as e:
+            # If image fails to load, pick a random valid image
+            print(f" Error loading {image_path}, using random image instead")
+            random_idx = random.randint(0, len(self.files) - 1)
+            image_path = os.path.join(self.root, self.files[random_idx])
+            image = Image.open(image_path).convert('RGB')
 
         if self.transform:
             image = self.transform(image)

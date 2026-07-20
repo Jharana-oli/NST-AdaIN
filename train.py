@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
@@ -8,6 +9,11 @@ from utils.utils import *
 from utils.model import *
 from tqdm import tqdm
 from torchvision.utils import save_image
+
+# ── FIX: Handle large/corrupted images ──
+from PIL import Image, ImageFile
+Image.MAX_IMAGE_PIXELS = 500_000_000  # Allow large images
+ImageFile.LOAD_TRUNCATED_IMAGES = True  # Handle truncated images
 
 
 def parse_arguments():
@@ -99,14 +105,16 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        drop_last=True
+        drop_last=True,
+        num_workers=0,  # Set to 0 to avoid multiprocessing issues
     )
     style_dataloader = DataLoader(
         style_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        drop_last=True
+        drop_last=True,
+        num_workers=0,  # Set to 0 to avoid multiprocessing issues
     )
     
     print('Number of batches in content dataset:', len(content_dataloader))
