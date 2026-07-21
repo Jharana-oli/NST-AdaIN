@@ -1,7 +1,7 @@
 import argparse
 import os
-import random
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.optim as optim
 from pathlib import Path
@@ -9,6 +9,7 @@ from utils.utils import *
 from utils.model import *
 from tqdm import tqdm
 from torchvision.utils import save_image
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -66,71 +67,99 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
 
-    # ── Fix 1: correct save path for Kaggle ──
+    # ── Device setup ──────────────────────────────────────
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    num_gpus = torch.cuda.device_count()
+    print(f"Using device: {device}")
+    print(f"Number of GPUs: {num_gpus}")
+    for i in range(num_gpus):
+        print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+
+    # ── Save directory ────────────────────────────────────
     if os.path.exists('/kaggle/working'):
         save_dir = Path('/kaggle/working/experiment') / args.experiment
     else:
         save_dir = Path('experiment') / args.experiment
-
     save_dir.mkdir(exist_ok=True, parents=True)
 
-    # Save argument values
+    # ── Save arguments ────────────────────────────────────
     with open(save_dir / 'args.txt', 'w') as args_file:
         for key, value in vars(args).items():
             args_file.write(f'{key}: {value}\n')
     print("args.txt written!")
-    
+
+    # ── Transforms and datasets ───────────────────────────
     content_transform = get_transform(args.content_size, args.crop, args.final_size)
-    style_transform = get_transform(args.style_size, args.crop, args.final_size)
-    
+    style_transform   = get_transform(args.style_size,   args.crop, args.final_size)
+
     content_dataset = ImageFolderDataset(args.content_dir, content_transform)
-    style_dataset = ImageFolderDataset(args.style_dir, style_transform)
+    style_dataset   = ImageFolderDataset(args.style_dir,   style_transform)
 
     print(f"Content images: {len(content_dataset)}")
     print(f"Style images:   {len(style_dataset)}")
 
-    # ── Fix 2: pin_memory only on GPU ──
+    # ── DataLoaders ───────────────────────────────────────
     content_dataloader = DataLoader(
         content_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        drop_last=True,
-        num_workers=0,  # Set to 0 to avoid multiprocessing issues
+        num_workers=4,        # parallel image loading
+        drop_last=True
     )
     style_dataloader = DataLoader(
         style_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        drop_last=True,
-        num_workers=0,  # Set to 0 to avoid multiprocessing issues
+        num_workers=4,
+        drop_last=True
     )
-    
-    print('Number of batches in content dataset:', len(content_dataloader))
-    print('Number of batches in style dataset:  ', len(style_dataloader))
-    
+
+    print(f"Content batches: {len(content_dataloader)}")
+    print(f"Style batches:   {len(style_dataloader)}")
+
+    # ── Models ────────────────────────────────────────────
     encoder = VGGEncoder(args.vgg).to(device)
     decoder = Decoder().to(device)
+
+    # ── Multi-GPU setup ───────────────────────────────────
+    if num_gpus > 1:
+        print(f"Using DataParallel across {num_gpus} GPUs!")
+        encoder = nn.DataParallel(encoder)
+        decoder = nn.DataParallel(decoder)
+
     print("Encoder and Decoder loaded!")
 
-    optimizer = optim.Adam(decoder.parameters(), lr=args.lr)
+    # ── Optimizer and scheduler ───────────────────────────
+    # get decoder parameters correctly whether wrapped or not
+    decoder_params = decoder.module.parameters() \
+        if hasattr(decoder, 'module') else decoder.parameters()
+
+    optimizer = optim.Adam(decoder_params, lr=args.lr)
     scheduler = optim.lr_scheduler.LambdaLR(
         optimizer,
         lr_lambda=lambda epoch: 1.0 / (1.0 + args.lr_decay * epoch)
     )
 
+    # ── Resume from checkpoint ────────────────────────────
     if args.resume:
         print(f"Resuming from {args.decoder_path}")
-        decoder.load_state_dict(torch.load(args.decoder_path, map_location=device))
-        optimizer.load_state_dict(torch.load(args.optimizer_path, map_location=device))
+        state_dict = torch.load(args.decoder_path, map_location=device)
 
-    print('Training...')
+        if hasattr(decoder, 'module'):
+            decoder.module.load_state_dict(state_dict)
+        else:
+            decoder.load_state_dict(state_dict)
 
+        optimizer.load_state_dict(
+            torch.load(args.optimizer_path, map_location=device)
+        )
+        print("Checkpoint loaded successfully!")
+
+    # ── Training ──────────────────────────────────────────
+    print("Training...")
     mse_loss = torch.nn.MSELoss()
     encoder.eval()
 
@@ -148,24 +177,43 @@ def main():
             content_batch = content_batch.to(device)
             style_batch   = style_batch.to(device)
 
+            # ── Forward pass ──────────────────────────────
             c_feats = encoder(content_batch)
             s_feats = encoder(style_batch)
 
-            t = adaptive_instance_normalization(c_feats[-1], s_feats[-1])
+            # handle DataParallel output
+            # DataParallel returns list — take last element
+            c_feats_last = c_feats[-1] if isinstance(c_feats, (list, tuple)) \
+                           else c_feats
+            s_feats_last = s_feats[-1] if isinstance(s_feats, (list, tuple)) \
+                           else s_feats
+
+            t = adaptive_instance_normalization(c_feats_last, s_feats_last)
             g = decoder(t)
             g_feats = encoder(g)
 
-            loss_c = mse_loss(g_feats[-1], t) * args.content_weight
+            # ── Content loss ──────────────────────────────
+            g_feats_last = g_feats[-1] if isinstance(g_feats, (list, tuple)) \
+                           else g_feats
+            loss_c = mse_loss(g_feats_last, t) * args.content_weight
 
+            # ── Style loss ────────────────────────────────
             loss_s = 0
-            for g_f, s_f in zip(g_feats, s_feats):
+            g_feats_list = g_feats if isinstance(g_feats, (list, tuple)) \
+                           else [g_feats]
+            s_feats_list = s_feats if isinstance(s_feats, (list, tuple)) \
+                           else [s_feats]
+
+            for g_f, s_f in zip(g_feats_list, s_feats_list):
                 g_mean, g_std = calc_mean_std(g_f)
                 s_mean, s_std = calc_mean_std(s_f)
                 loss_s += mse_loss(g_mean, s_mean) + mse_loss(g_std, s_std)
             loss_s = loss_s * args.style_weight
 
+            # ── Total loss ────────────────────────────────
             loss = loss_c + loss_s
 
+            # ── Backprop ──────────────────────────────────
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -195,17 +243,29 @@ def main():
             )
 
         if (epoch + 1) % args.save_interval == 0:
-            torch.save(decoder.state_dict(),
-                       save_dir / f'decoder_{epoch+1}.pth')
-            torch.save(optimizer.state_dict(),
-                       save_dir / f'optimizer_{epoch+1}.pth')
 
+            # ── Save decoder weights ──────────────────────
+            # always save the underlying module, not the DataParallel wrapper
+            decoder_state = decoder.module.state_dict() \
+                if hasattr(decoder, 'module') else decoder.state_dict()
+            torch.save(
+                decoder_state,
+                save_dir / f'decoder_{epoch+1}.pth'
+            )
+            torch.save(
+                optimizer.state_dict(),
+                save_dir / f'optimizer_{epoch+1}.pth'
+            )
+
+            # ── Save sample image ─────────────────────────
             with torch.no_grad():
                 output = torch.cat([content_batch, style_batch, g], dim=0)
-                save_image(output,
-                           save_dir / f'output_{epoch+1}.png',
-                           nrow=args.batch_size)
-            print(f"Saved checkpoint and sample image at epoch {epoch+1}")
+                save_image(
+                    output,
+                    save_dir / f'output_{epoch+1}.png',
+                    nrow=args.batch_size
+                )
+            print(f"Saved checkpoint and sample at epoch {epoch+1}")
 
 
 if __name__ == '__main__':
