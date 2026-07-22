@@ -105,7 +105,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        num_workers=2,        # parallel image loading
+        num_workers=0,        
         drop_last=True
     )
     style_dataloader = DataLoader(
@@ -113,7 +113,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        num_workers=2,
+        num_workers=0,
         drop_last=True
     )
 

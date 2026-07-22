@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 import os
+import torch
 from PIL import Image,ImageFile
 from torchvision import transforms
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -17,23 +18,30 @@ class ImageFolderDataset(Dataset):
     def __len__(self):
         return len(self.files)
 
-    def __getitem__(self, idx):
-        image_path = os.path.join(self.root, self.files[idx])
-        
+    # In utils.py __getitem__ — make it more robust:
+def __getitem__(self, idx):
+    max_attempts = 5
+    
+    for attempt in range(max_attempts):
         try:
+            image_path = os.path.join(self.root, self.files[idx])
             image = Image.open(image_path).convert('RGB')
+            
+            # Check image is not too large
+            if image.size[0] * image.size[1] > 50_000_000:
+                raise ValueError(f"Image too large: {image.size}")
+                
+            if self.transform:
+                image = self.transform(image)
+            return image
+            
         except Exception as e:
-            # If image fails to load, pick a random valid image
-            print(f" Error loading {image_path}, using random image instead")
-            random_idx = random.randint(0, len(self.files) - 1)
-            image_path = os.path.join(self.root, self.files[random_idx])
-            image = Image.open(image_path).convert('RGB')
-
-        if self.transform:
-            image = self.transform(image)
-
-        return image
-
+            print(f"Attempt {attempt+1} failed for {image_path}: {e}")
+            idx = random.randint(0, len(self.files) - 1)
+    
+    # If all attempts fail return a black image
+    print("All attempts failed — returning black image")
+    return torch.zeros(3, 256, 256)
 
 def get_transform(size, crop, final_size):
     transform_list = []
