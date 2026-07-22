@@ -109,7 +109,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        num_workers=0,
+        num_workers=4,
         drop_last=True
     )
     style_dataloader = DataLoader(
@@ -117,7 +117,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        num_workers=0,
+        num_workers=4,
         drop_last=True
     )
 
